@@ -2,8 +2,8 @@
 
 Generate two daily market charts from public Cboe data: SPX closing 0DTE
 put/call volume and month-to-date index option volume across all four Cboe
-options exchanges. Run the Python tools directly or use the included portable
-agent skill in a scheduled workflow.
+options exchanges. On Windows, double-click the included batch files, or run
+the Python tools directly. A portable agent skill is also included.
 
 No API key is required. Dates use **America/Chicago (CT)**, including daylight
 saving time. Every successful run replaces its fixed output file.
@@ -67,6 +67,28 @@ denominator; zero-volume days for a group do.
 
 Requirements: Python **3.11 or newer** and network access to Cboe's public
 website and CDN. Run these commands from the repository root.
+
+### Windows: double-click to run
+
+After completing the Windows environment setup below, double-click either file
+in the repository root:
+
+| Batch file | Report | Output in repository root |
+| --- | --- | --- |
+| [`run_zero_dte.bat`](run_zero_dte.bat) | Latest completed SPX session's 0DTE volume | `spx_0dte.png` |
+| [`run_index_mtd.bat`](run_index_mtd.bat) | Index option MTD volume and ADV | `cboe_index_mtd.png` |
+
+Both use this repository's `.venv\Scripts\python.exe`, locate the repository
+relative to the batch file, and write output to its root regardless of the
+launching directory. Dates still use America/Chicago. No scheduler is installed
+or required; click whenever you want a fresh report.
+
+On success, the new PNG opens in your default image viewer. The window shows
+the actual session date or MTD period, plus SPX, VIX, Other, and total MTD ADV
+for the morning report, and stays open until you press a key. On a skip or
+failure it shows the reason and does not open a previous image. If `.venv` is
+missing, it asks you to complete the setup below. If Windows has no working
+PNG viewer, the generated image remains available in the repository root.
 
 ### Windows PowerShell
 
@@ -141,32 +163,6 @@ python -B <skill-folder>/scripts/spx_reports.py index-mtd --output-dir <report-d
 
 Replace the angle-bracket placeholders above with actual paths. No
 machine-specific paths or credentials are stored in the skill.
-
-## Scheduling
-
-Set the scheduler timezone to **America/Chicago**, rather than a fixed UTC
-offset. Configure the evening task at **20:00** and the morning task at
-**09:00**. Use an absolute script path, an explicit output directory, and the
-virtual environment's Python executable. A scheduler must run on a machine
-that has the project and dependencies available.
-
-For an agent scheduler, suitable task prompts are:
-
-**Evening**
-
-> Use cboe-spx-reports to run zero-dte with its default latest-completed-session
-> selection in this project. Return spx_0dte.png and its actual session date.
-> Report a skip or source error accurately.
-
-**Morning**
-
-> Use cboe-spx-reports to run index-mtd for CT today in this project. Return
-> cboe_index_mtd.png with the target month, cutoff, and MTD ADV totals. Report
-> a skip or source error accurately.
-
-Keep the morning task enabled at month boundaries so it can report the
-preceding month. The commands support repeated runs; this repository does not
-install or enable a scheduler.
 
 ## Outputs and failure behavior
 
@@ -244,6 +240,9 @@ no network access. GitHub Actions runs them on Linux and Windows.
 .github/workflows/tests.yml Offline test workflow
 docs/images/               Saved sample charts displayed in this README
 tools/spx_reports.py        Repository CLI wrapper
+tools/run_report.py         Windows launcher: results and new-image preview
+run_zero_dte.bat            Double-click to generate and open the 0DTE report
+run_index_mtd.bat           Double-click to generate and open the MTD report
 tests/test_spx_reports.py   Offline tests
 requirements.txt           Repository dependency entry point
 LICENSE                    MIT license
