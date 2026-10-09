@@ -1,0 +1,239 @@
+# Cboe SPX Reports
+
+Generate two daily market charts from public Cboe data: SPX closing 0DTE
+put/call volume and month-to-date index option volume across all four Cboe
+options exchanges. Run the Python tools directly or use the included portable
+agent skill in a scheduled workflow.
+
+No API key is required. Dates use **America/Chicago (CT)**, including daylight
+saving time. Every successful run replaces its fixed output file.
+
+## Reports
+
+| Command | Suggested run time (CT) | Output |
+| --- | --- | --- |
+| `zero-dte` | 8:00 PM | `spx_0dte.png` |
+| `index-mtd` | 9:00 AM | `cboe_index_mtd.png` |
+
+### SPX closing 0DTE volume
+
+- Left panel: SPX regular-session five-minute candlesticks, green for up and
+  red for down, with a reference line at the official daily close.
+- Right panel: the displayed session's cumulative put/call contract volume at
+  the **10 total strikes nearest the close**. Puts extend left in red and calls right in green,
+  with equal scales about zero and numeric volume labels.
+- Only the requested day's PM-settled **SPXW** contracts qualify. AM-settled
+  standard SPX contracts are excluded because they stopped trading earlier.
+- Use `--strikes N` to change the number of displayed strikes.
+- By default, choose the latest trading session whose cash close plus the
+  20-minute delayed-data window has passed. Before today's close, just after
+  midnight, and on weekends or holidays, use the previous completed session.
+  For example, a run at 00:03 CT on October 9 still reports October 8 when Cboe
+  retains its candles and expired chain. The chart and JSON identify that date.
+
+### Cboe index option MTD volume
+
+- Target period: the month containing **yesterday's CT calendar date**, from
+  its first trading day through yesterday. A run on November 1 reports October.
+- Fetch all symbols on **CBOE, BATS (BZX), C2, and EDGX**, then retain only
+  records whose `Product Type` is `I`.
+- Group by exact underlying into **SPX**, **VIX**, and **Other**. SPXW and
+  adjusted SPX classes belong to SPX; VIXW belongs to VIX. All other index
+  underlyings are automatically combined into Other.
+- Plot SPX daily candlesticks above stacked option volume, ordered from the
+  base upward as SPX, VIX, Other.
+- A separate stacked bar displays **MTD average daily volume (ADV)**, with a
+  numeric label for each group and the total. Its bar shares the daily volume
+  panel's y-axis, scale, height, and zero baseline for direct comparison.
+
+Each group's ADV is its MTD contract total divided by the **same number of
+trading days** in the target period. Weekends and holidays do not enter the
+denominator; zero-volume days for a group do.
+
+## Quick start
+
+Requirements: Python **3.11 or newer** and network access to Cboe's public
+website and CDN. Run these commands from the repository root.
+
+### Windows PowerShell
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -B -m pip install --no-cache-dir -r requirements.txt
+.\.venv\Scripts\python.exe -B tools/spx_reports.py zero-dte
+.\.venv\Scripts\python.exe -B tools/spx_reports.py index-mtd
+```
+
+### macOS / Linux
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -B -m pip install --no-cache-dir -r requirements.txt
+.venv/bin/python -B tools/spx_reports.py zero-dte
+.venv/bin/python -B tools/spx_reports.py index-mtd
+```
+
+The resulting PNGs are written to the current working directory. Use
+`--output-dir reports` to put them in a dedicated directory.
+
+## Command options
+
+```text
+spx_reports.py {zero-dte,index-mtd}
+               [--date YYYY-MM-DD]
+               [--strikes N]
+               [--output-dir DIRECTORY]
+               [--timeout SECONDS]
+```
+
+| Option | Default | Behavior |
+| --- | --- | --- |
+| `--date` | Latest completed session for 0DTE; CT today for MTD | Request an exact 0DTE session without fallback, or override the MTD run date (cutoff: date minus one day). |
+| `--strikes` | `10` | Number of nearest strikes for `zero-dte`. |
+| `--output-dir` | Current directory | Destination for the report's fixed filename. |
+| `--timeout` | `30` | Timeout in seconds per HTTP request; transient failures have up to three attempts. |
+
+Examples below use `python` from an activated virtual environment:
+
+```sh
+# Display 20 strikes and write to a dedicated directory.
+python -B tools/spx_reports.py zero-dte --strikes 20 --output-dir reports
+
+# Report the completed month of October 2026.
+python -B tools/spx_reports.py index-mtd --date 2026-11-01 --output-dir reports
+
+# Inspect the command help.
+python -B tools/spx_reports.py --help
+```
+
+`--date` does not provide historical option snapshots. An old `zero-dte` run
+can succeed only while Cboe still serves that date's intraday candles and
+expired contracts.
+
+## Agent skill
+
+The repository includes
+[cboe-spx-reports](.agents/skills/cboe-spx-reports/SKILL.md), a self-contained
+skill with its script, dependencies, source reference, and MIT license.
+
+To transfer it, copy the **entire** `.agents/skills/cboe-spx-reports` directory
+into the destination agent's skill directory, then install that folder's
+`requirements.txt` in the destination environment. The repository-level
+`tools/spx_reports.py` wrapper is optional; a copied skill runs directly:
+
+```sh
+python -B <skill-folder>/scripts/spx_reports.py zero-dte --output-dir <report-directory>
+python -B <skill-folder>/scripts/spx_reports.py index-mtd --output-dir <report-directory>
+```
+
+Replace the angle-bracket placeholders above with actual paths. No
+machine-specific paths or credentials are stored in the skill.
+
+## Scheduling
+
+Set the scheduler timezone to **America/Chicago**, rather than a fixed UTC
+offset. Configure the evening task at **20:00** and the morning task at
+**09:00**. Use an absolute script path, an explicit output directory, and the
+virtual environment's Python executable. A scheduler must run on a machine
+that has the project and dependencies available.
+
+For an agent scheduler, suitable task prompts are:
+
+**Evening**
+
+> Use cboe-spx-reports to run zero-dte with its default latest-completed-session
+> selection in this project. Return spx_0dte.png and its actual session date.
+> Report a skip or source error accurately.
+
+**Morning**
+
+> Use cboe-spx-reports to run index-mtd for CT today in this project. Return
+> cboe_index_mtd.png with the target month, cutoff, and MTD ADV totals. Report
+> a skip or source error accurately.
+
+Keep the morning task enabled at month boundaries so it can report the
+preceding month. The commands support repeated runs; this repository does not
+install or enable a scheduler.
+
+## Outputs and failure behavior
+
+The command emits a JSON result that a scheduler can inspect:
+
+| Status | Exit code | Meaning |
+| --- | --- | --- |
+| `ok` | `0` | A new PNG was written; JSON includes its absolute path and report metrics. |
+| `skipped` | `0` | No applicable session exists; no new PNG was written. |
+| `error` | `1` | Data is unavailable, incomplete, stale, or invalid; details are written to stderr. |
+
+- Successful runs atomically replace the same two filenames.
+- Failed and skipped runs preserve the previous PNG. Check the status before
+  presenting that image as a current report.
+- Downloads stay in memory. Runtime cache and temporary output files are
+  removed on exit; no raw data, snapshots, logs, or dated image copies are saved.
+- `.gitignore` excludes virtual environments, Python caches, local environment
+  files, and both generated report filenames, including in subdirectories.
+
+## Data sources and limitations
+
+The tools use [Cboe SPX delayed quotes](https://www.cboe.com/delayed_quotes/spx/quote_table/)
+for the option chain, and the corresponding Cboe CDN chart resources for SPX
+minute and daily OHLC. Monthly volume comes from
+[Cboe Historical Options Data](https://www.cboe.com/us/options/market_statistics/historical_data/).
+Exact endpoints and field mappings are documented in
+[data-sources.md](.agents/skills/cboe-spx-reports/references/data-sources.md).
+
+These public endpoints are not a versioned API contract. Cboe may change
+their schemas, delay publication, or remove expired contracts. The tool rejects
+missing closing candles, incomplete daily exchange coverage, missing put/call
+pairs, and invalid volumes. The default 0DTE date selection falls back across
+sessions that have not closed; it does not recover snapshots Cboe has already
+removed. An explicit `--date` is never silently changed. Upstream omission of
+an individual options class cannot always be detected from the public report.
+
+US equity sessions and early closes use the `exchange_calendars` XNYS calendar
+as a proxy for the SPX cash session. The monthly volume report retains Cboe's
+published daily totals, including the sessions Cboe includes in them.
+
+The MIT license covers this project's code and documentation. Cboe data remains
+subject to Cboe's terms; no market data is bundled with the repository.
+
+## Development and tests
+
+Run the offline tests with the same virtual environment:
+
+```powershell
+# Windows
+.\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
+```
+
+```sh
+# macOS / Linux
+.venv/bin/python -B -m unittest discover -s tests -v
+```
+
+The tests cover expiry selection, nearest strikes, candle aggregation, index
+grouping, common ADV denominators, shared volume/ADV axes, month boundaries,
+CT midnight fallback, holidays, early closes, missing data, atomic replacement,
+PNG generation, and skill
+portability. They use synthetic data and cleaned temporary directories, with
+no network access. GitHub Actions runs them on Linux and Windows.
+
+## Repository layout
+
+```text
+.agents/skills/cboe-spx-reports/
+  SKILL.md                 Portable agent instructions
+  LICENSE                  License included in standalone skill copies
+  requirements.txt         Runtime dependencies
+  references/data-sources.md
+  scripts/spx_reports.py   Complete implementation
+.github/workflows/tests.yml Offline test workflow
+tools/spx_reports.py        Repository CLI wrapper
+tests/test_spx_reports.py   Offline tests
+requirements.txt           Repository dependency entry point
+LICENSE                    MIT license
+```
+
+## License
+
+[MIT](LICENSE). Copyright 2026 ycy-ycy.
