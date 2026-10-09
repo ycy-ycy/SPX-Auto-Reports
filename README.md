@@ -43,6 +43,10 @@ These saved examples stay unchanged when you generate new reports locally.
   midnight, and on weekends or holidays, use the previous completed session.
   For example, a run at 00:03 CT on October 9 still reports October 8 when Cboe
   retains its candles and expired chain. The chart and JSON identify that date.
+- If Cboe's historical daily series has not yet published that session, use
+  its same-day SPX index closing quote's `close`, with symbol, OHLC, date, and
+  closing-time validation. JSON `close_source` identifies the source. The last
+  minute's price and previous day's close are never substituted.
 
 ### Cboe index option MTD volume
 
@@ -193,7 +197,8 @@ Exact endpoints and field mappings are documented in
 
 These public endpoints are not a versioned API contract. Cboe may change
 their schemas, delay publication, or remove expired contracts. The tool rejects
-missing closing candles, incomplete daily exchange coverage, missing put/call
+missing closing intraday candles or a validated closing price, incomplete daily
+exchange coverage, missing put/call
 pairs, and invalid volumes. The default 0DTE date selection falls back across
 sessions that have not closed; it does not recover snapshots Cboe has already
 removed. An explicit `--date` is never silently changed. Upstream omission of
@@ -223,7 +228,8 @@ Run the offline tests with the same virtual environment:
 
 The tests cover expiry selection, nearest strikes, candle aggregation, index
 grouping, common ADV denominators, shared volume/ADV axes, month boundaries,
-CT midnight fallback, holidays, early closes, missing data, atomic replacement,
+CT midnight fallback, closing quotes when daily history lags, holidays, early
+closes, missing data, atomic replacement,
 PNG generation, and skill
 portability. They use synthetic data and cleaned temporary directories, with
 no network access. GitHub Actions runs them on Linux and Windows.

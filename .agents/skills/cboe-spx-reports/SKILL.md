@@ -51,6 +51,10 @@ Read [references/data-sources.md](references/data-sources.md) when inspecting or
 changing source schemas, market-session handling, or aggregation.
 
 - Fetch option quotes and SPX OHLC from Cboe, not SPY or a substitute ticker.
+  When the historical daily series has not published the selected 0DTE day,
+  use Cboe's same-day SPX index closing quote `close`, validating its symbol,
+  security type, OHLC, and last-trade date/time at or after cash close. Report
+  `close_source`; never substitute the final minute or previous-day close.
 - The evening report uses `volume`, not open interest, and excludes AM-settled
   standard SPX contracts whose last trading day preceded their expiration date.
   Use the actual selected session date for expiry and freshness checks. Return

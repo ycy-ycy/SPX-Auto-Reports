@@ -195,7 +195,7 @@ class ReportTests(unittest.TestCase):
                 client = Mock()
                 client.json.return_value = {"timestamp": "source snapshot"}
                 bar = reports.Candle(expected, 100, 102, 99, 101)
-                with patch.object(reports, "daily_candles", return_value=[bar]) as daily:
+                with patch.object(reports, "closing_spx_price", return_value=(bar.close, "historical_daily")) as daily:
                     with patch.object(reports, "five_minute_candles", return_value=[]) as intraday:
                         with patch.object(reports, "zero_dte_volumes", return_value=[(100, 20, 40)]) as quotes:
                             with patch.object(reports, "plot_zero_dte") as plot:
@@ -204,7 +204,7 @@ class ReportTests(unittest.TestCase):
                 self.assertEqual(result["date"], str(expected))
                 self.assertEqual(result["requested_date"], str(today))
                 self.assertEqual(result["used_previous_session"], expected != today)
-                self.assertEqual(daily.call_args.args[1], [expected])
+                self.assertEqual(daily.call_args.args[2], expected)
                 self.assertEqual(intraday.call_args.args[1], expected)
                 self.assertEqual(quotes.call_args.args[1], expected)
                 self.assertEqual(plot.call_args.args[3], expected)
@@ -229,6 +229,48 @@ class ReportTests(unittest.TestCase):
                         self.assertEqual(reports.main(["zero-dte", "--strikes", "1"]), 0)
         self.assertIn('"date": "2026-10-08"', output.getvalue())
         self.assertEqual(len(plot.call_args.args[0]), 78)
+
+    def test_zero_dte_uses_same_day_closing_quote_when_history_lags(self):
+        day = date(2026, 10, 9)
+        start = reports.eastern_time("2026-10-09T09:30:00")
+        price = {"open": 7811.68, "high": 7812.25, "low": 7811.14, "close": 7812.23}
+        quote = {"symbol": "^SPX", "security_type": "index",
+                 "last_trade_time": "2026-10-09T16:14:59",
+                 "open": 7786.3599, "high": 7820.5698, "low": 7779.3398, "close": 7811.54,
+                 "options": [{"option": f"SPXW261009{s}07810000", "volume": 10} for s in "CP"]}
+        payloads = {
+            reports.HISTORY_URL: {"data": [{"date": "2026-10-08", **price}]},
+            reports.OPTIONS_URL: {"data": quote},
+            reports.INTRADAY_URL: {"data": [
+                {"datetime": (start + timedelta(minutes=i)).isoformat(), "price": price}
+                for i in range(1, 390)]},
+        }
+        client = Mock()
+        client.json.side_effect = payloads.__getitem__
+        with patch.object(reports, "plot_zero_dte") as plot:
+            result = reports.zero_dte_report(client, day, 1, Path("unused"))
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["date"], "2026-10-09")
+        self.assertEqual(result["close"], 7811.54)
+        self.assertEqual(result["close_source"], "closing_quote")
+        self.assertEqual(len(plot.call_args.args[0]), 78)
+        self.assertEqual(plot.call_args.args[2], 7811.54)
+        market_close = datetime(2026, 10, 9, 20, tzinfo=timezone.utc)
+        for change in ({"last_trade_time": "2026-10-08T16:14:59"},
+                       {"last_trade_time": "2026-10-09T15:59:00"},
+                       {"close": None}, {"close": 9000}, {"symbol": "SPY"}):
+            with self.subTest(change=change), self.assertRaises(reports.DataError):
+                reports.closing_spx_price(payloads[reports.HISTORY_URL],
+                                          {"data": {**quote, **change}}, day, market_close)
+        # A published official daily close remains preferred; invalid published
+        # candles must fail rather than being hidden by the fallback.
+        history = {"data": [{"date": str(day), "open": 7800, "high": 7820,
+                             "low": 7790, "close": 7810}]}
+        self.assertEqual(reports.closing_spx_price(history, {"data": quote}, day, market_close),
+                         (7810, "historical_daily"))
+        history["data"][0]["close"] = 9000
+        with self.assertRaises(reports.DataError):
+            reports.closing_spx_price(history, {"data": quote}, day, market_close)
 
     def test_adv_and_daily_volume_share_scale_and_pixel_baseline(self):
         day = date(2026, 10, 8)

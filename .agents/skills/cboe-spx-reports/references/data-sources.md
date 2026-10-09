@@ -1,6 +1,6 @@
 # Public Cboe sources and report semantics
 
-Verified against the public responses on October 8, 2026 (America/Chicago).
+Verified against the public responses on October 9, 2026 (America/Chicago).
 These are the endpoints used by Cboe's public web pages, not a versioned API
 contract. Schema changes must fail visibly rather than silently alter the result.
 
@@ -28,12 +28,18 @@ verified response started at 09:31 ET and ended at 15:59 ET. Aggregate into
 five-minute wall-clock buckets (09:30, 09:35, etc.), using first open, maximum
 high, minimum low, last close. Require coverage to within one minute of the
 session boundaries and reject internal missing minutes. Use the daily OHLC
-`close` for strike selection and the closing reference line; the last displayed
-minute is not guaranteed to contain the official closing index print.
+`close` for strike selection and the closing reference line. If the selected
+day is not yet in the historical series, use the SPX index closing quote's
+`close` after validating its same-day `last_trade_time` reaches cash close,
+its symbol is `^SPX`, security type is `index`, and its OHLC is valid. The
+quote's `close` is distinct from `prev_day_close`. The last displayed minute
+is not guaranteed to contain the official closing index print.
 
 Daily `data` is an array of `date` (YYYY-MM-DD) and string-valued OHLC. Validate
 selected records; old historical records may have a zero open and are irrelevant
-to the requested month. Require the requested closing day to be published.
+to the requested month. The MTD report requires every requested day to be
+published. The 0DTE report can use the validated same-day closing quote when
+the historical daily series lags; JSON `close_source` identifies the source.
 
 ## Index option month-to-date report
 
@@ -78,8 +84,9 @@ includes in its daily totals. Do not filter those totals to cash RTH.
 
 The evening report requires the underlying quote's ET last-trade date to match
 the requested day and to reach the cash close. It requires nonzero combined
-volume across selected strikes, complete call/put pairs, and the closing daily
-OHLC. Without `--date`, choose the latest cash session whose close plus 20
+volume across selected strikes, complete call/put pairs, and a validated closing
+price from daily OHLC or the same-day SPX closing quote. Without `--date`,
+choose the latest cash session whose close plus 20
 minutes has passed. Before today's publication window, on holidays/weekends,
 or just after CT midnight, use the preceding completed session rather than
 rejecting the run on a time gate. At 00:03 CT on October 9, 2026 this selects

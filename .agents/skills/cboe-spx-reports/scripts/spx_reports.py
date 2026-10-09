@@ -168,12 +168,30 @@ def five_minute_candles(payload: dict, day: date, market_open: datetime,
             for dt, bars in sorted(buckets.items())]
 
 
-def zero_dte_volumes(payload: dict, day: date, close: float, count: int,
-                     market_close: datetime) -> list[tuple[float, int, int]]:
+def closing_quote_data(payload: dict, day: date, market_close: datetime) -> dict:
     data = payload["data"]
     last = data.get("last_trade_time")
     if not last or eastern_time(last).date() != day or eastern_time(last) < market_close:
         raise DataError(f"Closing quote snapshot not available for {day}")
+    return data
+
+
+def closing_spx_price(history: dict, quotes: dict, day: date,
+                      market_close: datetime) -> tuple[float, str]:
+    if any(date.fromisoformat(row["date"]) == day for row in history["data"]):
+        return daily_candles(history, [day])[0].close, "historical_daily"
+    # The historical series can lag after the close while the same-day quote
+    # already contains Cboe's closing OHLC. Never use the final minute or a
+    # previous day's price as a substitute for the official closing index print.
+    data = closing_quote_data(quotes, day, market_close)
+    if data.get("symbol") != "^SPX" or data.get("security_type") != "index":
+        raise DataError("Closing quote is not the SPX index")
+    return candle(day, data).close, "closing_quote"
+
+
+def zero_dte_volumes(payload: dict, day: date, close: float, count: int,
+                     market_close: datetime) -> list[tuple[float, int, int]]:
+    data = closing_quote_data(payload, day, market_close)
     pairs = {}
     seen = set()
     for row in data["options"]:
@@ -414,15 +432,17 @@ def zero_dte_report(client, day, count, output_dir, now=None):
         return {"status": "skipped", "reason": "No SPX regular session", "date": day.isoformat()}
     market_open = cal.session_open(day.isoformat()).to_pydatetime()
     market_close = cal.session_close(day.isoformat()).to_pydatetime()
-    close = daily_candles(client.json(HISTORY_URL), [day])[0].close
-    bars = five_minute_candles(client.json(INTRADAY_URL), day, market_open, market_close)
+    history = client.json(HISTORY_URL)
     quotes = client.json(OPTIONS_URL)
+    close, close_source = closing_spx_price(history, quotes, day, market_close)
+    bars = five_minute_candles(client.json(INTRADAY_URL), day, market_open, market_close)
     volumes = zero_dte_volumes(quotes, day, close, count, market_close)
     destination = output_dir / OUTPUTS["zero-dte"]
     plot_zero_dte(bars, volumes, close, day, destination)
     return {"status": "ok", "date": day.isoformat(), "output": str(destination.resolve()),
             "requested_date": requested_day.isoformat(), "used_previous_session": day != requested_day,
-            "close": close, "strikes": len(volumes), "quote_timestamp": quotes.get("timestamp"),
+            "close": close, "close_source": close_source,
+            "strikes": len(volumes), "quote_timestamp": quotes.get("timestamp"),
             "put_volume": sum(v[1] for v in volumes), "call_volume": sum(v[2] for v in volumes)}
 
 
