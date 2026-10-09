@@ -8,6 +8,19 @@ agent skill in a scheduled workflow.
 No API key is required. Dates use **America/Chicago (CT)**, including daylight
 saving time. Every successful run replaces its fixed output file.
 
+## Sample charts
+
+Generated on October 9, 2026 (CT), using the completed October 8 session.
+These saved examples stay unchanged when you generate new reports locally.
+
+### SPX closing 0DTE — October 8, 2026
+
+![SPX five-minute candles and closing 0DTE put/call volume at the ten nearest strikes on October 8, 2026](docs/images/spx-0dte-2026-10-08.png)
+
+### Cboe index option volume — October 2026 through October 8
+
+![SPX daily candles, stacked SPX/VIX/Other option volume, and MTD ADV with a shared volume axis through October 8, 2026](docs/images/cboe-index-mtd-2026-10-08.png)
+
 ## Reports
 
 | Command | Suggested run time (CT) | Output |
@@ -195,7 +208,8 @@ as a proxy for the SPX cash session. The monthly volume report retains Cboe's
 published daily totals, including the sessions Cboe includes in them.
 
 The MIT license covers this project's code and documentation. Cboe data remains
-subject to Cboe's terms; no market data is bundled with the repository.
+subject to Cboe's terms. The repository includes illustrative sample charts;
+raw market data is not bundled.
 
 ## Development and tests
 
@@ -228,6 +242,7 @@ no network access. GitHub Actions runs them on Linux and Windows.
   references/data-sources.md
   scripts/spx_reports.py   Complete implementation
 .github/workflows/tests.yml Offline test workflow
+docs/images/               Saved sample charts displayed in this README
 tools/spx_reports.py        Repository CLI wrapper
 tests/test_spx_reports.py   Offline tests
 requirements.txt           Repository dependency entry point
