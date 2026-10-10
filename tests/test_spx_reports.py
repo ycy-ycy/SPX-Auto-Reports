@@ -287,6 +287,44 @@ class ReportTests(unittest.TestCase):
         with patch.object(reports, "save_png", side_effect=inspect):
             reports.plot_index_mtd(bars, [(100, 30, 1)], (100, 30, 1), day, day, Path("unused"))
 
+    def test_daily_totals_are_correct_and_fit_dense_months(self):
+        # Equal-height, eight-digit totals are tougher to place than September's
+        # varying heights. Check actual rendered bounds, including 22/23 bars.
+        for count in (1, 12, 13, 21, 22, 23):
+            with self.subTest(trading_days=count):
+                days = [date(2026, 9, 1) + timedelta(days=i) for i in range(count)]
+                bars = [reports.Candle(day, 100, 102, 99, 101) for day in days]
+                volumes = [(9_999_999, 7_777_777, 222_224)] * count
+                adv = volumes[0]
+
+                def inspect(fig, destination):
+                    fig.set_dpi(160)  # Match the exported PNG.
+                    fig.canvas.draw()
+                    _, volume_ax, _, adv_ax = fig.axes
+                    renderer = fig.canvas.get_renderer()
+                    labels = volume_ax.texts
+                    self.assertEqual(len(labels), count)
+                    self.assertEqual(volume_ax.get_ylim(), adv_ax.get_ylim())
+                    bounds = []
+                    for i, (label, row) in enumerate(zip(labels, volumes)):
+                        self.assertEqual(label.get_text(), f"{sum(row):,}")
+                        self.assertEqual(label.xy, (i, sum(row)))
+                        box = label.get_window_extent(renderer)
+                        panel = volume_ax.get_window_extent(renderer)
+                        self.assertGreaterEqual(box.x0, panel.x0)
+                        self.assertLessEqual(box.x1, panel.x1)
+                        self.assertGreaterEqual(box.y0, panel.y0)
+                        self.assertLessEqual(box.y1, panel.y1)
+                        self.assertFalse(box.overlaps(volume_ax.get_legend().get_window_extent(renderer)))
+                        for previous in bounds:
+                            self.assertFalse(box.overlaps(previous))
+                        for bar in volume_ax.patches:
+                            self.assertFalse(box.overlaps(bar.get_window_extent(renderer)))
+                        bounds.append(box)
+
+                with patch.object(reports, "save_png", side_effect=inspect):
+                    reports.plot_index_mtd(bars, volumes, adv, days[0], days[-1], Path("unused"))
+
     def test_errors_preserve_previous_report(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / reports.OUTPUTS["index-mtd"]

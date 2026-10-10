@@ -10,8 +10,8 @@ saving time. Every successful run replaces its fixed output file.
 
 ## Sample charts
 
-Generated on October 9, 2026 (CT), using the completed October 8 session.
-These saved examples stay unchanged when you generate new reports locally.
+Saved examples from completed Cboe trading sessions.
+These examples stay unchanged when you generate new reports locally.
 
 ### SPX closing 0DTE — October 8, 2026
 
@@ -19,7 +19,11 @@ These saved examples stay unchanged when you generate new reports locally.
 
 ### Cboe index option volume — October 2026 through October 8
 
-![SPX daily candles, stacked SPX/VIX/Other option volume, and MTD ADV with a shared volume axis through October 8, 2026](docs/images/cboe-index-mtd-2026-10-08.png)
+![SPX daily candles, stacked SPX/VIX/Other option volume with daily totals, and MTD ADV with a shared volume axis through October 8, 2026](docs/images/cboe-index-mtd-2026-10-08.png)
+
+### Cboe index option volume — full September 2026 (21 trading days)
+
+![Full September 2026 SPX candles and index option volume, with an exact total above every daily stacked bar and a separate MTD ADV bar](docs/images/cboe-index-mtd-2026-09-30.png)
 
 ## Reports
 
@@ -58,7 +62,10 @@ These saved examples stay unchanged when you generate new reports locally.
   adjusted SPX classes belong to SPX; VIXW belongs to VIX. All other index
   underlyings are automatically combined into Other.
 - Plot SPX daily candlesticks above stacked option volume, ordered from the
-  base upward as SPX, VIX, Other.
+  base upward as SPX, VIX, Other. Every daily bar shows its **total contract
+  volume** above the stack, with commas and no abbreviated or rounded counts.
+  For more than 12 trading days, labels tilt to fit each column; the volume
+  panel leaves extra headroom and grows wider for long months.
 - A separate stacked bar displays **MTD average daily volume (ADV)**, with a
   numeric label for each group and the total. Its bar shares the daily volume
   panel's y-axis, scale, height, and zero baseline for direct comparison.
@@ -227,7 +234,8 @@ Run the offline tests with the same virtual environment:
 ```
 
 The tests cover expiry selection, nearest strikes, candle aggregation, index
-grouping, common ADV denominators, shared volume/ADV axes, month boundaries,
+grouping, common ADV denominators, shared volume/ADV axes, exact daily totals
+and non-overlapping rendered labels for up to 23 bars, month boundaries,
 CT midnight fallback, closing quotes when daily history lags, holidays, early
 closes, missing data, atomic replacement,
 PNG generation, and skill

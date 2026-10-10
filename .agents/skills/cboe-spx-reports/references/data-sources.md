@@ -97,8 +97,10 @@ historical recovery or persistent snapshot store is included.
 
 The daily volume and MTD ADV bars occupy the same figure row and share a
 Matplotlib y-axis. Their limits, ticks, pixel scale, and zero baseline match.
-The common upper limit includes all daily totals and the ADV total; numeric
-ADV details occupy the separate upper-right summary panel.
+Each daily stack has an exact, comma-separated total of SPX + VIX + Other
+contracts above it. Dense months tilt these labels to keep them separate.
+The common upper limit includes all daily totals and the ADV total, with
+headroom for labels; numeric ADV details occupy the upper-right summary panel.
 
 For a morning run on November 1, the report targets October through October 31.
 For a run on October 2, it targets October through October 1. Weekends and

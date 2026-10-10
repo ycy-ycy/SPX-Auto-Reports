@@ -35,8 +35,10 @@ Use `python -B` to avoid leaving bytecode files.
   produces `cboe_index_mtd.png`. The target month contains yesterday's CT calendar
   date. Include only completed trading days from that month's first day through
   yesterday. Plot SPX daily candles above stacked index option volume, with SPX
-  at the base, VIX above it, and Other at the top. Plot a separate stacked MTD
-  ADV bar beside daily volume on the same row, sharing its y-axis and zero
+  at the base, VIX above it, and Other at the top. Label every daily stack with
+  its exact total contract volume, using commas. For more than 12 trading days,
+  tilt totals and leave enough headroom for a full month of labels. Plot a
+  separate stacked MTD ADV bar beside daily volume on the same row, sharing its y-axis and zero
   baseline, with numbers for all three groups and the total.
 
 Set the scheduler timezone to `America/Chicago`, not a fixed UTC offset. DST changes

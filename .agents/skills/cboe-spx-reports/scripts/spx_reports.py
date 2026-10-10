@@ -364,8 +364,8 @@ def plot_zero_dte(bars, volumes, close, day, destination):
 def plot_index_mtd(bars, volumes, adv, start, cutoff, destination):
     with plotting() as plt:
         from matplotlib.ticker import FuncFormatter
-        fig = plt.figure(figsize=(15, 8), layout="constrained")
-        grid = fig.add_gridspec(2, 2, width_ratios=[3.5, 1.3], height_ratios=[2.4, 1.4])
+        fig = plt.figure(figsize=(max(15, len(bars) * .55 + 3), 9), layout="constrained")
+        grid = fig.add_gridspec(2, 2, width_ratios=[3.5, 1.3], height_ratios=[2.4, 2])
         price_ax = fig.add_subplot(grid[0, 0])
         volume_ax = fig.add_subplot(grid[1, 0], sharex=price_ax)
         summary_ax = fig.add_subplot(grid[0, 1])
@@ -380,6 +380,16 @@ def plot_index_mtd(bars, volumes, adv, start, cutoff, destination):
                 heights = [v[col] for v in volumes]
                 volume_ax.bar(x, heights, bottom=bottom, width=.64, color=color, label=group)
                 bottom = [a + b for a, b in zip(bottom, heights)]
+            # Full contract counts stay legible in a complete month: slanted
+            # labels fit one trading-day column, with extra height above stacks.
+            dense = len(bars) > 12
+            for i, daily_total in enumerate(bottom):
+                volume_ax.annotate(
+                    f"{daily_total:,}", (i, daily_total), xytext=(0, 5),
+                    textcoords="offset points", fontsize=9, color="#334155",
+                    ha="left" if dense else "center", va="bottom",
+                    rotation=65 if dense else 0, rotation_mode="anchor",
+                )
             step = max(1, math.ceil(len(bars) / 12))
             ticks = x[::step]
             volume_ax.set_xticks(ticks, [bars[i].when.strftime("%b %d") for i in ticks])
@@ -387,9 +397,10 @@ def plot_index_mtd(bars, volumes, adv, start, cutoff, destination):
             volume_ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v / 1e6:g}M"))
             volume_ax.grid(axis="y", alpha=.16)
             volume_ax.set_axisbelow(True)
-            volume_ax.legend(ncol=3, frameon=False, loc="upper left")
+            volume_ax.legend(ncol=3, frameon=False, loc="lower left",
+                             bbox_to_anchor=(0, 1.02), borderaxespad=0)
             total = sum(adv)
-            volume_ax.set_ylim(0, max(1, total, *bottom) * 1.22)
+            volume_ax.set_ylim(0, max(1, total, *bottom) * 1.35)
             bottom = 0
             for group, color, value in zip(GROUPS, COLORS, adv):
                 adv_ax.bar(0, value, bottom=bottom, width=.45, color=color)
