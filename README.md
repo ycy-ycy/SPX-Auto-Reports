@@ -20,10 +20,6 @@ These examples stay unchanged when you generate new reports locally.
 The session reached 7,669.66–7,754.15. This example displays 23 strikes from
 7,655 through 7,765, including three additional listed strikes on each side.
 
-### Cboe index option volume — October 2026 through October 8
-
-![SPX daily candles, stacked SPX/VIX/Other option volume with daily totals, and MTD ADV with a shared volume axis through October 8, 2026](docs/images/cboe-index-mtd-2026-10-08.png)
-
 ### Cboe index option volume — full September 2026 (21 trading days)
 
 ![Full September 2026 SPX candles and index option volume, with an exact total above every daily stacked bar and a separate MTD ADV bar](docs/images/cboe-index-mtd-2026-09-30.png)
