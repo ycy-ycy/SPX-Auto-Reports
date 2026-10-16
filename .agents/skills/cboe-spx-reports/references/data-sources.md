@@ -1,6 +1,6 @@
 # Public Cboe sources and report semantics
 
-Verified against the public responses on October 9, 2026 (America/Chicago).
+Verified against the public responses on October 15, 2026 (America/Chicago).
 These are the endpoints used by Cboe's public web pages, not a versioned API
 contract. Schema changes must fail visibly rather than silently alter the result.
 
@@ -27,8 +27,15 @@ does not determine the expiration date. Regular-session minute records in the
 verified response started at 09:31 ET and ended at 15:59 ET. Aggregate into
 five-minute wall-clock buckets (09:30, 09:35, etc.), using first open, maximum
 high, minimum low, last close. Require coverage to within one minute of the
-session boundaries and reject internal missing minutes. Use the daily OHLC
-`close` for strike selection and the closing reference line. If the selected
+session boundaries and reject internal missing minutes. By default, select all
+listed strikes between the official daily OHLC `low` and `high`, inclusive,
+plus the three nearest listed strikes strictly below `low` and the three nearest
+strictly above `high`. Count listed strikes, including irregular gaps; fail if
+fewer than three exist on either side. Retain zero-volume rows in the full
+selection. `--strikes N` selects N nearest the official `close`
+instead. Use `close` for the closing reference line. Both panels share one
+price/strike y-axis, with volume bars at their actual strike values, every
+strike labeled, and adaptive figure height for dense ranges. If the selected
 day is not yet in the historical series, use the SPX index closing quote's
 `close` after validating its same-day `last_trade_time` reaches cash close,
 its symbol is `^SPX`, security type is `index`, and its OHLC is valid. The

@@ -13,9 +13,12 @@ saving time. Every successful run replaces its fixed output file.
 Saved examples from completed Cboe trading sessions.
 These examples stay unchanged when you generate new reports locally.
 
-### SPX closing 0DTE — October 8, 2026
+### SPX closing 0DTE — October 15, 2026
 
-![SPX five-minute candles and closing 0DTE put/call volume at the ten nearest strikes on October 8, 2026](docs/images/spx-0dte-2026-10-08.png)
+![SPX five-minute candles and 0DTE put/call volume at all session-range strikes plus three on each side, sharing the price axis, on October 15, 2026](docs/images/spx-0dte-2026-10-15.png)
+
+The session reached 7,669.66–7,754.15. This example displays 23 strikes from
+7,655 through 7,765, including three additional listed strikes on each side.
 
 ### Cboe index option volume — October 2026 through October 8
 
@@ -37,11 +40,21 @@ These examples stay unchanged when you generate new reports locally.
 - Left panel: SPX regular-session five-minute candlesticks, green for up and
   red for down, with a reference line at the official daily close.
 - Right panel: the displayed session's cumulative put/call contract volume at
-  the **10 total strikes nearest the close**. Puts extend left in red and calls right in green,
-  with equal scales about zero and numeric volume labels.
+  **every listed strike within the official SPX daily low/high, inclusive,
+  plus the three nearest listed strikes below the low and three above the high**.
+  Puts extend left in red and calls right in green, with equal scales about
+  zero and exact numeric volume labels, including zero-volume rows.
+- Both panels share the same SPX price/strike y-axis. Each volume bar aligns
+  with its actual strike price on the candles. The figure grows taller when
+  needed to keep every strike and volume label readable on wide-range days.
+  The candles occupy only the session's price range within this expanded axis.
 - Only the requested day's PM-settled **SPXW** contracts qualify. AM-settled
   standard SPX contracts are excluded because they stopped trading earlier.
-- Use `--strikes N` to change the number of displayed strikes.
+- The default is `--strikes all`. Use `--strikes N` to select only the N
+  strikes nearest the close instead.
+- The three extra strikes on each side are counted from the actual option
+  chain, even when strike intervals differ. Missing put/call pairs or fewer
+  than three listed strikes on either side cause the report to fail visibly.
 - By default, choose the latest trading session whose cash close plus the
   20-minute delayed-data window has passed. Before today's close, just after
   midnight, and on weekends or holidays, use the previous completed session.
@@ -127,7 +140,7 @@ The resulting PNGs are written to the current working directory. Use
 ```text
 spx_reports.py {zero-dte,index-mtd}
                [--date YYYY-MM-DD]
-               [--strikes N]
+               [--strikes all|N]
                [--output-dir DIRECTORY]
                [--timeout SECONDS]
 ```
@@ -135,13 +148,16 @@ spx_reports.py {zero-dte,index-mtd}
 | Option | Default | Behavior |
 | --- | --- | --- |
 | `--date` | Latest completed session for 0DTE; CT today for MTD | Request an exact 0DTE session without fallback, or override the MTD run date (cutoff: date minus one day). |
-| `--strikes` | `10` | Number of nearest strikes for `zero-dte`. |
+| `--strikes` | `all` | All listed strikes within the session low/high plus three below and three above for `zero-dte`; a positive integer selects that many nearest the close. |
 | `--output-dir` | Current directory | Destination for the report's fixed filename. |
 | `--timeout` | `30` | Timeout in seconds per HTTP request; transient failures have up to three attempts. |
 
 Examples below use `python` from an activated virtual environment:
 
 ```sh
+# Display every strike reached during the session plus three on each side.
+python -B tools/spx_reports.py zero-dte --strikes all
+
 # Display 20 strikes and write to a dedicated directory.
 python -B tools/spx_reports.py zero-dte --strikes 20 --output-dir reports
 
@@ -184,6 +200,11 @@ The command emits a JSON result that a scheduler can inspect:
 | `ok` | `0` | A new PNG was written; JSON includes its absolute path and report metrics. |
 | `skipped` | `0` | No applicable session exists; no new PNG was written. |
 | `error` | `1` | Data is unavailable, incomplete, stale, or invalid; details are written to stderr. |
+
+For `zero-dte`, JSON includes the official `session_low` / `session_high`,
+the displayed `strike_low` / `strike_high`, the number of `strikes`, and
+`context_strikes_per_side` (`3` for `all`, `0` for a numeric strike count).
+The `put_volume` and `call_volume` totals cover only the displayed strikes.
 
 - Successful runs atomically replace the same two filenames.
 - Failed and skipped runs preserve the previous PNG. Check the status before
@@ -233,8 +254,11 @@ Run the offline tests with the same virtual environment:
 .venv/bin/python -B -m unittest discover -s tests -v
 ```
 
-The tests cover expiry selection, nearest strikes, candle aggregation, index
-grouping, common ADV denominators, shared volume/ADV axes, exact daily totals
+The tests cover expiry selection, all strikes within the official daily range
+plus three listed strikes on each side, including irregular strike intervals,
+nearest strikes, shared price/strike axes and readable labels at up to 85
+strikes, candle aggregation, index grouping, common ADV denominators,
+shared volume/ADV axes, exact daily totals
 and non-overlapping rendered labels for up to 23 bars, month boundaries,
 CT midnight fallback, closing quotes when daily history lags, holidays, early
 closes, missing data, atomic replacement,

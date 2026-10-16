@@ -69,6 +69,46 @@ class DataTests(unittest.TestCase):
         with self.assertRaises(reports.DataError):
             reports.zero_dte_volumes(payload, self.day, 100, 1, close)
 
+    def test_all_strikes_uses_session_range_inclusive_and_keeps_zero_rows(self):
+        close = datetime(2026, 10, 8, 20, tzinfo=timezone.utc)
+        options = [{"option": f"SPXW261008{side}{strike * 1000:08d}",
+                    "volume": 0 if strike == 100 else strike + (side == "C")}
+                   for strike in range(65, 145, 5) for side in "CP"]
+        options += [{"option": "SPX261008C00100000", "volume": 9999},
+                    {"option": "SPXW261009P00100000", "volume": 9999}]
+        payload = {"data": {"options": options, "last_trade_time": "2026-10-08T16:14:59"}}
+        actual = reports.zero_dte_volumes(payload, self.day, 109, None, close,
+                                           price_range=(95, 110))
+        self.assertEqual(actual, [(strike, 0 if strike == 100 else strike,
+                                  0 if strike == 100 else strike + 1)
+                                 for strike in range(80, 130, 5)])
+        for price_range in (None, (150, 160), (110, 95), (65, 110), (95, 140)):
+            with self.subTest(price_range=price_range), self.assertRaises(reports.DataError):
+                reports.zero_dte_volumes(payload, self.day, 109, None, close,
+                                         price_range=price_range)
+        payload["data"]["options"].remove(next(
+            row for row in options if row["option"] == "SPXW261008C00100000"))
+        with self.assertRaises(reports.DataError):
+            reports.zero_dte_volumes(payload, self.day, 109, None, close,
+                                     price_range=(95, 110))
+
+    def test_context_counts_listed_strikes_with_irregular_gaps(self):
+        close = datetime(2026, 10, 8, 20, tzinfo=timezone.utc)
+        strikes = [10, 20, 45, 65, 70, 90, 95, 100, 105, 110,
+                   115, 120, 140, 150, 200, 220]
+        options = [{"option": f"SPXW261008{side}{strike * 1000:08d}", "volume": 10}
+                   for strike in reversed(strikes) for side in "CP"]
+        payload = {"data": {"options": options, "last_trade_time": "2026-10-08T16:14:59"}}
+        actual = reports.zero_dte_volumes(payload, self.day, 109, None, close,
+                                          price_range=(95, 110))
+        self.assertEqual([row[0] for row in actual], strikes[3:-3])
+        # Complete pairs are required even in the added context strikes.
+        payload["data"]["options"].remove(next(
+            row for row in options if row["option"] == "SPXW261008P00065000"))
+        with self.assertRaises(reports.DataError):
+            reports.zero_dte_volumes(payload, self.day, 109, None, close,
+                                     price_range=(95, 110))
+
     def test_monthly_exact_filter_and_underlying_merging(self):
         rows = published_rows(self.day) + [
             ["2026/10/08", "SPX", "SPX", "I", "CBOE", 100],
@@ -195,7 +235,7 @@ class ReportTests(unittest.TestCase):
                 client = Mock()
                 client.json.return_value = {"timestamp": "source snapshot"}
                 bar = reports.Candle(expected, 100, 102, 99, 101)
-                with patch.object(reports, "closing_spx_price", return_value=(bar.close, "historical_daily")) as daily:
+                with patch.object(reports, "closing_spx_candle", return_value=(bar, "historical_daily")) as daily:
                     with patch.object(reports, "five_minute_candles", return_value=[]) as intraday:
                         with patch.object(reports, "zero_dte_volumes", return_value=[(100, 20, 40)]) as quotes:
                             with patch.object(reports, "plot_zero_dte") as plot:
@@ -229,6 +269,36 @@ class ReportTests(unittest.TestCase):
                         self.assertEqual(reports.main(["zero-dte", "--strikes", "1"]), 0)
         self.assertIn('"date": "2026-10-08"', output.getvalue())
         self.assertEqual(len(plot.call_args.args[0]), 78)
+
+    def test_default_and_explicit_all_use_official_daily_range(self):
+        day = date(2026, 10, 8)
+        start = reports.eastern_time("2026-10-08T09:30:00")
+        # The official range extends beyond the available minute-candle range.
+        price = {"open": 100, "high": 102, "low": 99, "close": 101}
+        payloads = {
+            reports.HISTORY_URL: {"data": [{"date": str(day), **price, "low": 95, "high": 110}]},
+            reports.INTRADAY_URL: {"data": [
+                {"datetime": (start + timedelta(minutes=i)).isoformat(), "price": price}
+                for i in range(390)]},
+            reports.OPTIONS_URL: {"data": {"last_trade_time": "2026-10-08T16:14:59", "options": [
+                {"option": f"SPXW261008{side}{strike * 1000:08d}", "volume": strike}
+                for strike in range(65, 145, 5) for side in "CP"]}},
+        }
+        for extra in ([], ["--strikes", "all"]):
+            with self.subTest(extra=extra):
+                with patch.object(reports.CboeClient, "json", side_effect=payloads.__getitem__):
+                    with patch.object(reports, "plot_zero_dte") as plot:
+                        with patch("sys.stdout", new_callable=io.StringIO) as output:
+                            self.assertEqual(reports.main(["zero-dte", "--date", str(day), *extra]), 0)
+                self.assertEqual([row[0] for row in plot.call_args.args[1]], list(range(80, 130, 5)))
+                self.assertIn('"strike_selection": "all_in_session_range_plus_context"', output.getvalue())
+                self.assertIn('"context_strikes_per_side": 3', output.getvalue())
+                self.assertIn('"session_low": 95.0', output.getvalue())
+                self.assertIn('"session_high": 110.0', output.getvalue())
+        for value in ("0", "-1", "bad", "1.5"):
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                with patch("sys.stderr", new_callable=io.StringIO):
+                    reports.main(["zero-dte", "--strikes", value])
 
     def test_zero_dte_uses_same_day_closing_quote_when_history_lags(self):
         day = date(2026, 10, 9)
@@ -286,6 +356,53 @@ class ReportTests(unittest.TestCase):
                                        adv_ax.transData.transform((0, value))[1])
         with patch.object(reports, "save_png", side_effect=inspect):
             reports.plot_index_mtd(bars, [(100, 30, 1)], (100, 30, 1), day, day, Path("unused"))
+
+    def test_zero_dte_shared_price_axis_and_dense_strike_labels(self):
+        for count in (1, 17, 23, 50, 85):
+            with self.subTest(strikes=count):
+                strikes = [7500.0 + 5 * i for i in range(count)]
+                # A wider gap must retain its true size on both panels.
+                strikes[-1] += 5
+                bars = [reports.Candle(reports.eastern_time("2026-10-08T09:30:00"),
+                                       strikes[0], strikes[-1] + 2, strikes[0] - 2, strikes[-1])]
+                volumes = [(strike, 0 if i == 0 else 123456, 654321)
+                           for i, strike in enumerate(strikes)]
+
+                def inspect(fig, destination):
+                    fig.set_dpi(160)
+                    fig.canvas.draw()
+                    price_ax, volume_ax = fig.axes
+                    self.assertTrue(price_ax.get_shared_y_axes().joined(price_ax, volume_ax))
+                    self.assertEqual(price_ax.get_ylim(), volume_ax.get_ylim())
+                    self.assertEqual(list(volume_ax.get_yticks()), strikes)
+                    renderer = fig.canvas.get_renderer()
+                    panel = volume_ax.get_window_extent(renderer)
+                    self.assertEqual(len(volume_ax.texts), count * 2)
+                    previous = [None, None]
+                    for i, (strike, put, call) in enumerate(volumes):
+                        self.assertAlmostEqual(price_ax.transData.transform((0, strike))[1],
+                                               volume_ax.transData.transform((0, strike))[1])
+                        for side, value in enumerate((put, call)):
+                            bar = volume_ax.patches[side * count + i]
+                            self.assertAlmostEqual(bar.get_y() + bar.get_height() / 2, strike)
+                            label = volume_ax.texts[2 * i + side]
+                            self.assertEqual(label.get_text(), f"{value:,}")
+                            self.assertEqual(label.get_position()[1], strike)
+                            box = label.get_window_extent(renderer)
+                            self.assertGreaterEqual(box.x0, panel.x0)
+                            self.assertLessEqual(box.x1, panel.x1)
+                            self.assertGreaterEqual(box.y0, panel.y0)
+                            self.assertLessEqual(box.y1, panel.y1)
+                            if previous[side] is not None:
+                                self.assertFalse(box.overlaps(previous[side]))
+                            previous[side] = box
+                    tick_bounds = [label.get_window_extent(renderer)
+                                   for label in volume_ax.get_yticklabels()]
+                    for lower, upper in zip(tick_bounds, tick_bounds[1:]):
+                        self.assertFalse(lower.overlaps(upper))
+
+                with patch.object(reports, "save_png", side_effect=inspect):
+                    reports.plot_zero_dte(bars, volumes, strikes[-1], date(2026, 10, 8), Path("unused"))
 
     def test_daily_totals_are_correct_and_fit_dense_months(self):
         # Equal-height, eight-digit totals are tougher to place than September's

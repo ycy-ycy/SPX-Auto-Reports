@@ -35,6 +35,7 @@ EXCHANGES = ("CBOE", "BATS", "C2", "EDGX")
 GROUPS = ("SPX", "VIX", "Other")
 COLORS = ("#2563eb", "#f59e0b", "#8b5cf6")
 UP, DOWN = "#16a34a", "#dc2626"
+CONTEXT_STRIKES = 3
 OUTPUTS = {"zero-dte": "spx_0dte.png", "index-mtd": "cboe_index_mtd.png"}
 OPTION = re.compile(r"^(SPXW|SPX)(\d{6})([CP])(\d{8})$")
 
@@ -176,21 +177,29 @@ def closing_quote_data(payload: dict, day: date, market_close: datetime) -> dict
     return data
 
 
-def closing_spx_price(history: dict, quotes: dict, day: date,
-                      market_close: datetime) -> tuple[float, str]:
+def closing_spx_candle(history: dict, quotes: dict, day: date,
+                       market_close: datetime) -> tuple[Candle, str]:
     if any(date.fromisoformat(row["date"]) == day for row in history["data"]):
-        return daily_candles(history, [day])[0].close, "historical_daily"
+        return daily_candles(history, [day])[0], "historical_daily"
     # The historical series can lag after the close while the same-day quote
     # already contains Cboe's closing OHLC. Never use the final minute or a
     # previous day's price as a substitute for the official closing index print.
     data = closing_quote_data(quotes, day, market_close)
     if data.get("symbol") != "^SPX" or data.get("security_type") != "index":
         raise DataError("Closing quote is not the SPX index")
-    return candle(day, data).close, "closing_quote"
+    return candle(day, data), "closing_quote"
 
 
-def zero_dte_volumes(payload: dict, day: date, close: float, count: int,
-                     market_close: datetime) -> list[tuple[float, int, int]]:
+def closing_spx_price(history: dict, quotes: dict, day: date,
+                      market_close: datetime) -> tuple[float, str]:
+    bar, source = closing_spx_candle(history, quotes, day, market_close)
+    return bar.close, source
+
+
+def zero_dte_volumes(payload: dict, day: date, close: float, count: int | None,
+                     market_close: datetime, *,
+                     price_range: tuple[float, float] | None = None
+                     ) -> list[tuple[float, int, int]]:
     data = closing_quote_data(payload, day, market_close)
     pairs = {}
     seen = set()
@@ -208,14 +217,35 @@ def zero_dte_volumes(payload: dict, day: date, close: float, count: int,
         seen.add(symbol)
         strike = int(strike_text) / 1000
         pairs.setdefault(strike, {})[side] = number(row.get("volume"), symbol, volume=True)
-    if len(pairs) < count:
-        raise DataError(
-            f"Only {len(pairs)} same-day SPXW strikes available for {day}; need {count}. "
-            "Cboe may have removed expired contracts; live quotes cannot recover history."
-        )
-    nearest = sorted(pairs, key=lambda strike: (abs(strike - close), strike))[:count]
+    if count is None:
+        if price_range is None:
+            raise DataError("All-strikes selection requires the session's SPX low/high")
+        low, high = (number(value, "session range") for value in price_range)
+        if low <= 0 or low > high:
+            raise DataError("Invalid session low/high for all-strikes selection")
+        selected = [strike for strike in pairs if low <= strike <= high]
+        if not selected:
+            raise DataError(
+                f"No same-day SPXW strikes in the session range for {day}. "
+                "Cboe may have removed expired contracts; live quotes cannot recover history."
+            )
+        below = sorted(strike for strike in pairs if strike < low)[-CONTEXT_STRIKES:]
+        above = sorted(strike for strike in pairs if strike > high)[:CONTEXT_STRIKES]
+        if len(below) < CONTEXT_STRIKES or len(above) < CONTEXT_STRIKES:
+            raise DataError(
+                f"Need {CONTEXT_STRIKES} same-day SPXW strikes on each side of the "
+                f"session range; found {len(below)} below and {len(above)} above."
+            )
+        selected = below + selected + above
+    else:
+        if len(pairs) < count:
+            raise DataError(
+                f"Only {len(pairs)} same-day SPXW strikes available for {day}; need {count}. "
+                "Cboe may have removed expired contracts; live quotes cannot recover history."
+            )
+        selected = sorted(pairs, key=lambda strike: (abs(strike - close), strike))[:count]
     result = []
-    for strike in sorted(nearest):
+    for strike in sorted(selected):
         if set(pairs[strike]) != {"C", "P"}:
             raise DataError(f"Missing put/call quote at strike {strike}")
         result.append((strike, pairs[strike]["P"], pairs[strike]["C"]))
@@ -324,36 +354,53 @@ def save_png(fig, destination: Path):
 def plot_zero_dte(bars, volumes, close, day, destination):
     with plotting() as plt:
         from matplotlib.ticker import FuncFormatter
-        fig, (price_ax, volume_ax) = plt.subplots(1, 2, figsize=(15, 7),
-                                                gridspec_kw={"width_ratios": [1.5, 1]},
-                                                layout="constrained")
+        strikes, puts, calls = zip(*volumes)
+        step = min((b - a for a, b in zip(strikes, strikes[1:])), default=5)
+        low = min(*(bar.low for bar in bars), min(strikes), close)
+        high = max(*(bar.high for bar in bars), max(strikes), close)
+        padding = max(step * .9, (high - low) * .025)
+        # Keep every strike and exact count readable even on a wide-range day.
+        height = max(7, (high - low + 2 * padding) / step * .23 + 1.8)
+        fig, (price_ax, volume_ax) = plt.subplots(
+            1, 2, figsize=(16, height), sharey=True,
+            gridspec_kw={"width_ratios": [1.5, 1]}, layout="constrained",
+        )
         try:
             draw_candles(price_ax, bars)
             ticks = list(range(0, len(bars), max(1, len(bars) // 7)))
             price_ax.set_xticks(ticks, [bars[i].when.astimezone(ZoneInfo("America/Chicago")).strftime("%H:%M") for i in ticks])
             price_ax.set_xlabel("America/Chicago (CT)")
-            price_ax.set_title("SPX regular session | 5-minute candles")
-            price_ax.axhline(close, color="#64748b", ls="--", lw=.9)
+            price_ax.set_title("SPX regular session | 5-minute candles", pad=28)
+            price_ax.set_ylabel("SPX / strike")
+            for ax in (price_ax, volume_ax):
+                ax.axhline(close, color="#64748b", ls="--", lw=.9, zorder=0)
             price_ax.text(.02, .97, f"Close: {close:,.2f}", transform=price_ax.transAxes,
                           va="top", bbox={"facecolor": "white", "alpha": .85, "edgecolor": "none"})
-            strikes, puts, calls = zip(*volumes)
-            y = list(range(len(strikes)))
-            volume_ax.barh(y, [-v for v in puts], color=DOWN, height=.68, label="Put")
-            volume_ax.barh(y, calls, color=UP, height=.68, label="Call")
+            # Actual strike prices, rather than row numbers, align each volume
+            # bar with the same price in the candlestick panel.
+            volume_ax.barh(strikes, [-v for v in puts], color=DOWN, height=step * .68, label="Put")
+            volume_ax.barh(strikes, calls, color=UP, height=step * .68, label="Call")
             maximum = max(max(puts), max(calls), 1)
-            extent = maximum * 1.3
+            extent = maximum * 1.35
             volume_ax.set_xlim(-extent, extent)
             volume_ax.axvline(0, color="#334155", lw=1)
-            volume_ax.set_yticks(y, [f"{s:,.0f}" if s.is_integer() else f"{s:,.3f}" for s in strikes])
-            volume_ax.set_ylabel("Strike")
+            volume_ax.set_yticks(strikes)
+            volume_ax.yaxis.set_major_formatter(FuncFormatter(
+                lambda s, _: f"{s:,.0f}" if float(s).is_integer() else f"{s:,.3f}"
+            ))
+            volume_ax.tick_params(axis="y", labelleft=True, labelsize=9, length=0)
+            price_ax.tick_params(axis="y", labelsize=9)
+            price_ax.set_ylim(low - padding, high + padding)
             volume_ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{abs(v) / 1000:g}k"))
             volume_ax.set_xlabel("Put  <---  contracts  --->  Call")
-            volume_ax.set_title(f"0DTE SPXW | {len(strikes)} nearest strikes")
-            volume_ax.legend(loc="upper right", frameon=False)
-            volume_ax.margins(y=.15)
-            for i, (put, call) in enumerate(zip(puts, calls)):
-                volume_ax.text(-put - maximum * .02, i, f"{put:,}", ha="right", va="center", fontsize=9)
-                volume_ax.text(call + maximum * .02, i, f"{call:,}", ha="left", va="center", fontsize=9)
+            volume_ax.set_title(f"0DTE SPXW | {len(strikes)} strikes", pad=28)
+            volume_ax.legend(loc="lower center", bbox_to_anchor=(.5, 1), ncol=2,
+                             frameon=False, borderaxespad=0)
+            volume_ax.grid(axis="y", alpha=.16)
+            volume_ax.set_axisbelow(True)
+            for strike, put, call in volumes:
+                volume_ax.text(-put - maximum * .02, strike, f"{put:,}", ha="right", va="center", fontsize=9)
+                volume_ax.text(call + maximum * .02, strike, f"{call:,}", ha="left", va="center", fontsize=9)
             fig.suptitle(f"SPX closing 0DTE volume | {day.isoformat()}", fontsize=17, weight="bold")
             fig.supxlabel("Source: Cboe delayed quotes | Volume is cumulative contracts for the displayed session; PM-settled SPXW only", fontsize=9)
             save_png(fig, destination)
@@ -445,14 +492,20 @@ def zero_dte_report(client, day, count, output_dir, now=None):
     market_close = cal.session_close(day.isoformat()).to_pydatetime()
     history = client.json(HISTORY_URL)
     quotes = client.json(OPTIONS_URL)
-    close, close_source = closing_spx_price(history, quotes, day, market_close)
+    daily_bar, close_source = closing_spx_candle(history, quotes, day, market_close)
+    close = daily_bar.close
     bars = five_minute_candles(client.json(INTRADAY_URL), day, market_open, market_close)
-    volumes = zero_dte_volumes(quotes, day, close, count, market_close)
+    volumes = zero_dte_volumes(quotes, day, close, count, market_close,
+                               price_range=(daily_bar.low, daily_bar.high))
     destination = output_dir / OUTPUTS["zero-dte"]
     plot_zero_dte(bars, volumes, close, day, destination)
     return {"status": "ok", "date": day.isoformat(), "output": str(destination.resolve()),
             "requested_date": requested_day.isoformat(), "used_previous_session": day != requested_day,
             "close": close, "close_source": close_source,
+            "session_low": daily_bar.low, "session_high": daily_bar.high,
+            "strike_selection": "all_in_session_range_plus_context" if count is None else "nearest_close",
+            "context_strikes_per_side": CONTEXT_STRIKES if count is None else 0,
+            "strike_low": volumes[0][0], "strike_high": volumes[-1][0],
             "strikes": len(volumes), "quote_timestamp": quotes.get("timestamp"),
             "put_volume": sum(v[1] for v in volumes), "call_volume": sum(v[2] for v in volumes)}
 
@@ -475,17 +528,30 @@ def index_mtd_report(client, today, output_dir):
             "adv": dict(zip(GROUPS, adv)), "total_adv": sum(adv)}
 
 
+def strike_count(value: str) -> int | None:
+    if value.lower() == "all":
+        return None
+    try:
+        count = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--strikes must be 'all' or a positive integer") from exc
+    if count < 1:
+        raise argparse.ArgumentTypeError("--strikes must be 'all' or a positive integer")
+    return count
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report", choices=OUTPUTS)
     parser.add_argument("--date", type=date.fromisoformat,
                         help="Exact 0DTE session or MTD run date (YYYY-MM-DD); default 0DTE uses latest completed session")
-    parser.add_argument("--strikes", type=int, default=10, help="Nearest strikes, default 10 (zero-dte only)")
+    parser.add_argument("--strikes", type=strike_count, default=None, metavar="all|N",
+                        help=f"All strikes within the session low/high plus {CONTEXT_STRIKES} on each side (default), or N nearest the close (zero-dte only)")
     parser.add_argument("--output-dir", type=Path, default=Path.cwd())
     parser.add_argument("--timeout", type=float, default=30, help="HTTP timeout in seconds")
     args = parser.parse_args(argv)
-    if args.strikes < 1 or not math.isfinite(args.timeout) or args.timeout <= 0:
-        parser.error("--strikes and --timeout must be positive")
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error("--timeout must be positive")
     try:
         now = datetime.now(timezone.utc)
         today = args.date or now.astimezone(ZoneInfo("America/Chicago")).date()

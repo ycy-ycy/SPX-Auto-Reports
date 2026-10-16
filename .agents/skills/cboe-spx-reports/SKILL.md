@@ -27,9 +27,17 @@ Use `python -B` to avoid leaving bytecode files.
   Cboe data is retained; do not skip simply because CT today has not closed.
   It plots that session's SPX regular-session 5-minute candles
   (green up, red down), and cumulative same-session PM-settled SPXW put/call contract
-  volume at the ten strikes nearest the official SPX daily close. Puts extend
-  left in red and calls right in green on a symmetric axis. `--strikes N` changes
-  the number of strikes. Ten means ten total strikes, not ten on each side.
+  volume at every listed strike within the official SPX daily low/high,
+  inclusive, plus the three nearest listed strikes below the daily low and the
+  three nearest above the daily high (`--strikes all`, the default). Require
+  all three on each side; count listed strikes rather than assuming a fixed
+  price interval. Keep zero-volume rows. Puts extend
+  left in red and calls right in green on a symmetric contract-volume axis,
+  with an exact numeric label on each side. Both panels share the same SPX
+  price/strike y-axis: volume bars sit at their actual strike prices, aligned
+  with the candles. Increase figure height as needed to keep all strikes and
+  labels readable on wide-range days. `--strikes N` remains available to select
+  N total strikes nearest the official close instead.
 - **Morning, approximately 09:00 America/Chicago:**
   `python -B <skill-folder>/scripts/spx_reports.py index-mtd --output-dir <report-directory>`
   produces `cboe_index_mtd.png`. The target month contains yesterday's CT calendar
