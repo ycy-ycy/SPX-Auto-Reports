@@ -44,6 +44,10 @@ class DataError(ValueError):
     """Unavailable, incomplete, or invalid source data; never fabricate a report."""
 
 
+class Forbidden(DataError):
+    """The upstream data source denied this request with HTTP 403."""
+
+
 @dataclass(frozen=True)
 class Candle:
     when: datetime | date
@@ -105,7 +109,9 @@ class CboeClient:
                     408, 429, 500, 502, 503, 504
                 )
                 if not retryable or attempt + 1 == self.attempts:
-                    raise DataError(f"Cboe request failed: {url}: {exc}") from exc
+                    if isinstance(exc, HTTPError) and exc.code == 403:
+                        raise Forbidden(f"Request denied: {url}: {exc}") from exc
+                    raise DataError(f"Request failed: {url}: {exc}") from exc
                 time.sleep(2 ** attempt)
         raise AssertionError("Unreachable")
 
@@ -143,6 +149,32 @@ def daily_candles(payload: dict, sessions: list[date]) -> list[Candle]:
     if missing:
         raise DataError(f"Daily SPX candles not published for {sorted(missing)}")
     return [found[day] for day in sessions]
+
+
+def yahoo_spx_candles(client, sessions: list[date]) -> list[Candle]:
+    eastern = ZoneInfo("America/New_York")
+    start = datetime.combine(sessions[0], datetime.min.time(), eastern)
+    end = datetime.combine(sessions[-1] + timedelta(days=1), datetime.min.time(), eastern)
+    params = urlencode({"period1": int(start.timestamp()), "period2": int(end.timestamp()),
+                        "interval": "1d"})
+    raw = client.read("https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?" + params)
+    try:
+        chart = json.loads(raw)["chart"]
+        if chart["error"]:
+            raise DataError(f"Yahoo Finance chart error: {chart['error']}")
+        result, = chart["result"]
+        meta = result["meta"]
+        if (meta["symbol"], meta["instrumentType"], meta["dataGranularity"]) != ("^GSPC", "INDEX", "1d"):
+            raise DataError("Yahoo Finance did not return daily S&P 500 index prices")
+        quote, = result["indicators"]["quote"]
+        fields = ("open", "high", "low", "close")
+        rows = []
+        for stamp, *values in zip(result["timestamp"], *(quote[k] for k in fields), strict=True):
+            day = datetime.fromtimestamp(stamp, eastern).date()
+            rows.append({"date": day.isoformat(), **dict(zip(fields, values))})
+        return daily_candles({"data": rows}, sessions)
+    except (KeyError, TypeError, ValueError, OverflowError, OSError) as exc:
+        raise DataError(f"Invalid Yahoo Finance SPX daily history: {exc}") from exc
 
 
 def five_minute_candles(payload: dict, day: date, market_open: datetime,
@@ -408,7 +440,7 @@ def plot_zero_dte(bars, volumes, close, day, destination):
             plt.close(fig)
 
 
-def plot_index_mtd(bars, volumes, adv, start, cutoff, destination):
+def plot_index_mtd(bars, volumes, adv, start, cutoff, destination, *, price_source="Cboe"):
     with plotting() as plt:
         from matplotlib.ticker import FuncFormatter
         fig = plt.figure(figsize=(max(15, len(bars) * .55 + 3), 9), layout="constrained")
@@ -419,7 +451,7 @@ def plot_index_mtd(bars, volumes, adv, start, cutoff, destination):
         adv_ax = fig.add_subplot(grid[1, 1], sharey=volume_ax)
         try:
             draw_candles(price_ax, bars)
-            price_ax.set_title("SPX | Daily candles")
+            price_ax.set_title(f"SPX | Daily candles | {price_source}")
             price_ax.tick_params(labelbottom=False)
             x = list(range(len(bars)))
             bottom = [0] * len(bars)
@@ -472,7 +504,7 @@ def plot_index_mtd(bars, volumes, adv, start, cutoff, destination):
             adv_ax.set_axisbelow(True)
             fig.suptitle(f"Cboe index option volume | {start:%B %Y} through {cutoff.isoformat()}",
                          fontsize=17, weight="bold")
-            fig.supxlabel("Source: Cboe | CBOE + BATS (BZX) + C2 + EDGX | Product Type = I | SPX / VIX grouped by underlying", fontsize=9)
+            fig.supxlabel("Option volume: Cboe | CBOE + BATS (BZX) + C2 + EDGX | Product Type = I | SPX / VIX grouped by underlying", fontsize=9)
             save_png(fig, destination)
         finally:
             plt.close(fig)
@@ -518,13 +550,18 @@ def index_mtd_report(client, today, output_dir):
     if not sessions:
         return {"status": "skipped", "reason": "No completed trading days in target month",
                 "through": cutoff.isoformat()}
-    bars = daily_candles(client.json(HISTORY_URL), sessions)
+    try:
+        bars = daily_candles(client.json(HISTORY_URL), sessions)
+        price_source = "Cboe"
+    except Forbidden:
+        bars = yahoo_spx_candles(client, sessions)
+        price_source = "Yahoo Finance (^GSPC)"
     volumes = monthly_volumes(client.month_csv(cutoff), sessions)
     adv = tuple(sum(v[i] for v in volumes) / len(sessions) for i in range(3))
     destination = output_dir / OUTPUTS["index-mtd"]
-    plot_index_mtd(bars, volumes, adv, start, cutoff, destination)
+    plot_index_mtd(bars, volumes, adv, start, cutoff, destination, price_source=price_source)
     return {"status": "ok", "through": cutoff.isoformat(), "month": start.strftime("%Y-%m"),
-            "output": str(destination.resolve()), "trading_days": len(sessions),
+            "output": str(destination.resolve()), "trading_days": len(sessions), "price_source": price_source,
             "adv": dict(zip(GROUPS, adv)), "total_adv": sum(adv)}
 
 

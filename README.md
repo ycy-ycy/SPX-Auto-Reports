@@ -65,6 +65,9 @@ The session reached 7,669.66–7,754.15. This example displays 23 strikes from
 
 - Target period: the month containing **yesterday's CT calendar date**, from
   its first trading day through yesterday. A run on November 1 reports October.
+- If Cboe returns HTTP 403 for daily candles, the chart uses Yahoo Finance's
+  S&P 500 cash index (`^GSPC`) for the full period. The price panel and JSON
+  `price_source` identify the provider. Option volumes always come from Cboe.
 - Fetch all symbols on **CBOE, BATS (BZX), C2, and EDGX**, then retain only
   records whose `Product Type` is `I`.
 - Group by exact underlying into **SPX**, **VIX**, and **Other**. SPXW and

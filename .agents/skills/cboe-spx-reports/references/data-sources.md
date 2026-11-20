@@ -51,7 +51,15 @@ the historical daily series lags; JSON `close_source` identifies the source.
 ## Index option month-to-date report
 
 [Historical Options Data Download](https://www.cboe.com/us/options/market_statistics/historical_data/)
-provides the all-symbol monthly daily-volume CSV. Its download URL is:
+provides the all-symbol monthly daily-volume CSV. When Cboe historical daily
+prices return HTTP 403, the MTD price panel uses the Yahoo Finance daily chart
+for `^GSPC` at `https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC`.
+Request daily bars for the session range using an exclusive end date. Validate
+the symbol, index type, daily interval and OHLC for every expected session.
+Map timestamps to New York dates. The JSON `price_source` and the price panel
+identify the provider. Option volume always comes from Cboe.
+
+The volume download URL is:
 
 ```text
 https://www.cboe.com/us/options/market_statistics/historical_data/download/all_symbols/?reportType=volume&month=10&year=2026&volumeType=sum&volumeAggType=daily&exchanges=CBOE&exchanges=BATS&exchanges=C2&exchanges=EDGX

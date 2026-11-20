@@ -3,6 +3,7 @@
 import csv
 import importlib.util
 import io
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -159,6 +160,45 @@ class DataTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_mtd_history_403_switches_only_prices(self):
+        day = date(2026, 11, 2)
+        stamp = int(reports.eastern_time("2026-11-02T09:30").timestamp())
+        yahoo = {"chart": {"error": None, "result": [{
+            "meta": {"symbol": "^GSPC", "instrumentType": "INDEX", "dataGranularity": "1d"},
+            "timestamp": [stamp],
+            "indicators": {"quote": [{"open": [100], "high": [110], "low": [95], "close": [105]}]},
+        }]}}
+        rows = published_rows(day) + [[str(day), "SPXW", "SPX", "I", "CBOE", 321]]
+        client = reports.CboeClient()
+        requests = []
+
+        def respond(request, timeout):
+            url = request.full_url
+            requests.append(url)
+            if url == reports.HISTORY_URL:
+                raise reports.HTTPError(url, 403, "Forbidden", {}, None)
+            if url.startswith("https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?"):
+                return io.BytesIO(json.dumps(yahoo).encode())
+            self.assertTrue(url.startswith(reports.VOLUME_URL))
+            return io.BytesIO(csv_report(rows).encode())
+
+        with patch.object(reports, "urlopen", side_effect=respond), patch.object(reports, "plot_index_mtd") as plot:
+            result = reports.index_mtd_report(client, day + timedelta(days=1), Path("unused"))
+        self.assertEqual(len(requests), 3)
+        self.assertEqual(result["price_source"], "Yahoo Finance (^GSPC)")
+        self.assertEqual(plot.call_args.kwargs["price_source"], result["price_source"])
+        self.assertEqual(plot.call_args.args[0], [reports.Candle(day, 100, 110, 95, 105)])
+        self.assertEqual(result["total_adv"], 321)
+
+        record = yahoo["chart"]["result"][0]
+        for target, key, bad in [(record["meta"], "symbol", "SPY"), (record, "timestamp", []),
+                                 (record, "timestamp", [stamp - 86400]),
+                                 (record["indicators"]["quote"][0], "low", [None])]:
+            with self.subTest(key=key), patch.dict(target, {key: bad}):
+                with patch.object(client, "read", return_value=json.dumps(yahoo).encode()):
+                    with self.assertRaises(reports.DataError):
+                        reports.yahoo_spx_candles(client, [day])
+
     def test_default_date_uses_ct_at_utc_month_boundary(self):
         with patch.object(reports, "datetime") as clock:
             clock.now.return_value = datetime(2026, 2, 1, 2, tzinfo=timezone.utc)

@@ -60,7 +60,9 @@ they do not install or enable a scheduler.
 Read [references/data-sources.md](references/data-sources.md) when inspecting or
 changing source schemas, market-session handling, or aggregation.
 
-- Fetch option quotes and SPX OHLC from Cboe, not SPY or a substitute ticker.
+- Fetch option quotes and SPX OHLC from Cboe. For the MTD report only, if Cboe
+  denies daily history with HTTP 403, use Yahoo Finance daily OHLC for the
+  S&P 500 index (`^GSPC`). Identify the price source on the chart and in JSON.
   When the historical daily series has not published the selected 0DTE day,
   use Cboe's same-day SPX index closing quote `close`, validating its symbol,
   security type, OHLC, and last-trade date/time at or after cash close. Report
